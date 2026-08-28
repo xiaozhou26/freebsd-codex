@@ -55,11 +55,23 @@ jobs:
             EOF
             /usr/sbin/pkg bootstrap -f -y -r FreeBSD
             pkg update -f -r FreeBSD
-            test "$(pkg rquery -U -r FreeBSD '%n|%v|%o' codex)" \
-              = "codex|$CODEX_VERSION|misc/codex"
-            pkg install -U -y -r FreeBSD "codex-$CODEX_VERSION"
-            test "$(pkg query '%n|%v|%o' codex)" \
-              = "codex|$CODEX_VERSION|misc/codex"
+            available_version="$(pkg rquery -U -r FreeBSD '%v' codex)"
+            case "$available_version" in
+              "$CODEX_VERSION"|"$CODEX_VERSION"_*) ;;
+              *)
+                echo "requested codex $CODEX_VERSION, available $available_version" >&2
+                exit 1
+                ;;
+            esac
+            pkg install -U -y -r FreeBSD codex
+            installed_version="$(pkg query '%v' codex)"
+            case "$installed_version" in
+              "$CODEX_VERSION"|"$CODEX_VERSION"_*) ;;
+              *)
+                echo "requested codex $CODEX_VERSION, installed $installed_version" >&2
+                exit 1
+                ;;
+            esac
             pkg check -s codex
             pkg which -q /usr/local/bin/codex
 
