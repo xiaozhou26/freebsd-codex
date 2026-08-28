@@ -1,0 +1,113 @@
+name: FreeBSD codex-cli release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: FreeBSD pkg version
+        required: true
+        default: "0.150.0"
+      tag:
+        description: GitHub release tag
+        required: true
+        default: rust-v0.150.0
+
+permissions:
+  contents: write
+
+concurrency:
+  group: freebsd-codex-cli-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  package-freebsd:
+    if: github.repository == 'xiaozhou26/freebsd-codex'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Fetch codex package in FreeBSD 14.4
+        uses: vmactions/freebsd-vm@83b151f58c6047089f4c80eb5ba2039d158ce093 # v1.5.3
+        env:
+          CODEX_VERSION: ${{ inputs.version }}
+        with:
+          release: "14.4"
+          arch: x86_64
+          cpu: 2
+          mem: 4096
+          sync: rsync
+          copyback: true
+          envs: CODEX_VERSION
+          run: |
+            set -eux
+            freebsd-version
+            sysctl hw.ncpu hw.physmem
+            df -h /
+            mkdir -p /usr/local/etc/pkg/repos "$GITHUB_WORKSPACE/dist"
+            cat > /usr/local/etc/pkg/repos/FreeBSD.conf <<'EOF'
+            FreeBSD: {
+              url: "pkg+https://pkg.FreeBSD.org/${ABI}/latest",
+              mirror_type: "srv",
+              signature_type: "fingerprints",
+              fingerprints: "/usr/share/keys/pkg",
+              enabled: yes
+            }
+            EOF
+            /usr/sbin/pkg bootstrap -f -y -r FreeBSD
+            pkg update -f -r FreeBSD
+            test "$(pkg rquery -U -r FreeBSD '%n|%v|%o' codex)" \
+              = "codex|$CODEX_VERSION|misc/codex"
+            pkg install -U -y -r FreeBSD "codex-$CODEX_VERSION"
+            test "$(pkg query '%n|%v|%o' codex)" \
+              = "codex|$CODEX_VERSION|misc/codex"
+            pkg check -s codex
+            pkg which -q /usr/local/bin/codex
+
+            binary=/usr/local/bin/codex
+            test -x "$binary"
+            file "$binary" | tee /tmp/codex-file.txt
+            grep -F 'ELF 64-bit' /tmp/codex-file.txt
+            grep -F 'x86-64' /tmp/codex-file.txt
+            grep -F FreeBSD /tmp/codex-file.txt
+            ldd "$binary" > /tmp/codex-ldd.txt
+            cat /tmp/codex-ldd.txt
+            ! grep -Fq 'not found' /tmp/codex-ldd.txt
+            test "$("$binary" --version)" = "codex-cli $CODEX_VERSION"
+            "$binary" --help >/tmp/codex-help.txt
+            grep -q '^Usage: codex' /tmp/codex-help.txt
+
+            install -m 0755 "$binary" \
+              "$GITHUB_WORKSPACE/dist/codex-x86_64-unknown-freebsd"
+            sha256 -q "$GITHUB_WORKSPACE/dist/codex-x86_64-unknown-freebsd"
+
+      - name: Verify copied-back binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')" -eq 1
+          test -x dist/codex-x86_64-unknown-freebsd
+          file dist/codex-x86_64-unknown-freebsd | grep -F FreeBSD
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codex-${{ inputs.version }}-x86_64-unknown-freebsd
+          path: dist/codex-x86_64-unknown-freebsd
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Create or update GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CODEX_TAG: ${{ inputs.tag }}
+          CODEX_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          gh release view "$CODEX_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$CODEX_TAG" --repo "$GITHUB_REPOSITORY" \
+              --title "$CODEX_TAG" \
+              --notes "FreeBSD Ports codex-cli $CODEX_VERSION."
+          gh release upload "$CODEX_TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            dist/codex-x86_64-unknown-freebsd
