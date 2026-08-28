@@ -26,12 +26,12 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Fetch codex package in FreeBSD 14.4
+      - name: Fetch codex package from FreeBSD:15:latest
         uses: vmactions/freebsd-vm@83b151f58c6047089f4c80eb5ba2039d158ce093 # v1.5.3
         env:
           CODEX_VERSION: ${{ inputs.version }}
         with:
-          release: "14.4"
+          release: "15.1"
           arch: x86_64
           cpu: 2
           mem: 4096
@@ -46,7 +46,7 @@ jobs:
             mkdir -p /usr/local/etc/pkg/repos "$GITHUB_WORKSPACE/dist"
             cat > /usr/local/etc/pkg/repos/FreeBSD.conf <<'EOF'
             FreeBSD: {
-              url: "pkg+https://pkg.FreeBSD.org/${ABI}/latest",
+              url: "pkg+https://pkg.FreeBSD.org/FreeBSD:15:amd64/latest",
               mirror_type: "srv",
               signature_type: "fingerprints",
               fingerprints: "/usr/share/keys/pkg",
